@@ -41,6 +41,7 @@ Workflow Black Box ayuda a detectar esos riesgos antes de que lleguen al cliente
 | Mapa de ejecución | Ayuda a entender rápido dónde se rompe o se degrada un workflow. |
 | Root cause visual | Marca el nodo más probable detrás del problema detectado. |
 | Análisis de logs | Cruza errores, warnings y patrones de `silent failure`. |
+| Evidence Mode | Vincula findings con líneas exactas del log para auditar el diagnóstico. |
 | Reporte para cliente | Convierte hallazgos técnicos en un resumen compartible. |
 | Servidor MCP | Expone el analizador como herramientas reutilizables por agentes. |
 | Docker ready | Permite levantar la app en segundos en cualquier entorno compatible. |
@@ -53,6 +54,8 @@ Workflow Black Box ayuda a detectar esos riesgos antes de que lleguen al cliente
 - Resaltado de root cause.
 - Inspector interactivo por nodo.
 - Filtro de findings al seleccionar un nodo.
+- Pestaña de evidencia con líneas de log resaltadas.
+- Vinculación entre findings, nodos del mapa y logs.
 - Checklist de recomendaciones.
 - Reporte exportable y copiable.
 - Diseño responsive sin overflow horizontal global.
@@ -68,6 +71,12 @@ Workflow Black Box ayuda a detectar esos riesgos antes de que lleguen al cliente
 ## Vista del producto
 
 ![Vista previa de Workflow Black Box](docs/preview.png)
+
+## Evidence Mode
+
+Los findings detectados desde logs quedan vinculados con líneas concretas de evidencia. Al abrir una evidencia, la app sincroniza el nodo del mapa, el finding y el visor de logs para revisar el contexto técnico sin perder trazabilidad.
+
+![Evidence Mode de Workflow Black Box](docs/evidence-mode.png)
 
 ## Tecnologías
 
@@ -204,6 +213,7 @@ Este proyecto es un MVP orientado a portfolio. La base visual y funcional está 
 
 - `docs/hero.png`: portada principal del README.
 - `docs/architecture.png`: diagrama visual del flujo frontend, motor de análisis y MCP.
+- `docs/evidence-mode.png`: captura real de la pestaña de evidencia.
 - `docs/social-preview.png`: banner preparado para configurarlo como Social preview en GitHub.
 
 ## Roadmap
@@ -211,7 +221,6 @@ Este proyecto es un MVP orientado a portfolio. La base visual y funcional está 
 - Exportar reportes en PDF.
 - Soporte explícito para formatos de Zapier y Make.
 - Historial local de diagnósticos.
-- Vincular findings con líneas exactas del log.
 - Mejorar pan/zoom para workflows de más de 40 nodos.
 - Tests unitarios para `analyzer.ts`.
 - Modo demo con varios casos reales anonimizados.

@@ -25,8 +25,8 @@ import {
   CheckCircle2,
   SlidersHorizontal,
 } from "lucide-react";
-import { ChangeEvent, ReactNode, useMemo, useRef, useState } from "react";
-import { analyzeAutomation, AnalysisResult, Finding, FlowNode, Severity } from "./lib/analyzer";
+import { ChangeEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { analyzeAutomation, AnalysisResult, EvidenceReference, Finding, FlowNode, Severity } from "./lib/analyzer";
 import { sampleLog, sampleWorkflow } from "./samples";
 
 const severityLabel: Record<Severity, string> = {
@@ -35,6 +35,18 @@ const severityLabel: Record<Severity, string> = {
   medium: "Medium",
   low: "Low",
   info: "Info",
+};
+
+type ActiveAnalysisTab = "findings" | "recommendations" | "evidence" | "report";
+
+type EvidenceSelection = {
+  findingId: string;
+  line?: number;
+} | null;
+
+type LogLineView = {
+  lineNumber: number;
+  text: string;
 };
 
 function getNodeIcon(type: string) {
@@ -57,7 +69,9 @@ export function App() {
   const [activeInputTab, setActiveInputTab] = useState<'workflow' | 'logs'>('workflow');
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [reportTab, setReportTab] = useState<'preview' | 'raw'>('preview');
-  const [activeAnalysisTab, setActiveAnalysisTab] = useState<'findings' | 'recommendations' | 'report'>('findings');
+  const [activeAnalysisTab, setActiveAnalysisTab] = useState<ActiveAnalysisTab>('findings');
+  const [selectedEvidence, setSelectedEvidence] = useState<EvidenceSelection>(null);
+  const [evidenceCopied, setEvidenceCopied] = useState(false);
   
   // Double-State Sidebar: 'summary' or 'editors'
   const [sidebarMode, setSidebarMode] = useState<'summary' | 'editors'>('summary');
@@ -73,6 +87,14 @@ export function App() {
   const logFileRef = useRef<HTMLInputElement>(null);
 
   const result = useMemo(() => analyzeAutomation(workflowText, logText), [workflowText, logText]);
+  const logLines = useMemo<LogLineView[]>(
+    () => logText.split(/\r?\n/).map((text, index) => ({ lineNumber: index + 1, text })),
+    [logText],
+  );
+  const evidenceCount = useMemo(
+    () => result.findings.reduce((total, finding) => total + getLogEvidence(finding).length, 0),
+    [result.findings],
+  );
 
   async function copyReport() {
     await navigator.clipboard.writeText(result.clientReport);
@@ -94,6 +116,7 @@ export function App() {
     setWorkflowText(sampleWorkflow);
     setLogText(sampleLog);
     setSelectedNode(null);
+    setSelectedEvidence(null);
     setSidebarMode('summary');
     setZoom(1);
     setPan({ x: 0, y: 0 });
@@ -103,6 +126,7 @@ export function App() {
     setWorkflowText("");
     setLogText("");
     setSelectedNode(null);
+    setSelectedEvidence(null);
     setSidebarMode('editors');
     setZoom(1);
     setPan({ x: 0, y: 0 });
@@ -122,6 +146,7 @@ export function App() {
       setActiveInputTab('logs');
     }
     event.target.value = "";
+    setSelectedEvidence(null);
     setSidebarMode('summary');
     setZoom(1);
     setPan({ x: 0, y: 0 });
@@ -152,6 +177,7 @@ export function App() {
         setLogText(text);
         setActiveInputTab('logs');
       }
+      setSelectedEvidence(null);
       setSidebarMode('summary');
       setZoom(1);
       setPan({ x: 0, y: 0 });
@@ -173,6 +199,37 @@ export function App() {
     });
     return list;
   }, [result.findings]);
+
+  function openFindingEvidence(finding: Finding, evidenceRef?: EvidenceReference) {
+    const primaryEvidence = evidenceRef ?? getPrimaryLogEvidence(finding);
+
+    setSelectedEvidence({
+      findingId: finding.id,
+      line: primaryEvidence?.line,
+    });
+
+    if (finding.nodeName) {
+      setSelectedNode(finding.nodeName);
+    }
+
+    setActiveAnalysisTab('evidence');
+  }
+
+  async function copyEvidencePacket() {
+    const selectedFinding = selectedEvidence
+      ? result.findings.find((finding) => finding.id === selectedEvidence.findingId)
+      : null;
+    const findings = selectedFinding ? [selectedFinding] : result.findings.filter((finding) => getLogEvidence(finding).length > 0);
+    const packet = buildEvidencePacket(findings);
+
+    if (!packet) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(packet);
+    setEvidenceCopied(true);
+    window.setTimeout(() => setEvidenceCopied(false), 1400);
+  }
 
   // Pathfinding algorithm (BFS) to trace the risk path from trigger node to root cause failure node
   const riskPathEdges = useMemo(() => {
@@ -231,9 +288,10 @@ export function App() {
     let healthScore = 100;
     let silentRisk = 0;
     const concerns: { severity: Severity; text: string }[] = [];
+    const evidence: string[] = [];
     const nextSteps: string[] = [];
 
-    let section: 'none' | 'concerns' | 'steps' = 'none';
+    let section: 'none' | 'concerns' | 'evidence' | 'steps' = 'none';
 
     for (const line of lines) {
       const trimmed = line.trim();
@@ -247,6 +305,8 @@ export function App() {
         if (match) silentRisk = parseInt(match[1]);
       } else if (trimmed.startsWith("Primary concerns:")) {
         section = 'concerns';
+      } else if (trimmed.startsWith("Evidence detected:")) {
+        section = 'evidence';
       } else if (trimmed.startsWith("Recommended next steps:")) {
         section = 'steps';
       } else if (trimmed === "") {
@@ -266,13 +326,15 @@ export function App() {
               text: text,
             });
           }
+        } else if (section === 'evidence') {
+          evidence.push(trimmed.replace(/^- \s*/, ""));
         } else if (section === 'steps') {
           nextSteps.push(trimmed.replace(/^- \s*/, ""));
         }
       }
     }
 
-    return { workflowName, healthScore, silentRisk, concerns, nextSteps };
+    return { workflowName, healthScore, silentRisk, concerns, evidence, nextSteps };
   }, [result.clientReport]);
 
   const toggleMobileSidebar = () => {
@@ -598,6 +660,7 @@ export function App() {
                   onFilterFindings={() => {
                     setActiveAnalysisTab('findings');
                   }}
+                  onOpenEvidence={openFindingEvidence}
                 />
               )}
             </div>
@@ -621,6 +684,14 @@ export function App() {
                 >
                   <CheckCircle2 size={14} />
                   Checklist ({allRecommendations.length})
+                </button>
+                <button
+                  type="button"
+                  className={`analysisTabButton ${activeAnalysisTab === 'evidence' ? 'active' : ''}`}
+                  onClick={() => setActiveAnalysisTab('evidence')}
+                >
+                  <FileText size={14} />
+                  Evidence ({evidenceCount})
                 </button>
                 <button
                   type="button"
@@ -659,21 +730,40 @@ export function App() {
                     )}
                   </div>
                   <div className="findingsListCol">
-                    {filteredFindings.map((finding) => (
-                      <div className="findingRow" key={finding.id}>
-                        <div>
-                          <span className={`severityIndicator ${finding.severity}`}>
-                            {severityLabel[finding.severity]}
-                          </span>
+                    {filteredFindings.map((finding) => {
+                      const primaryEvidence = getPrimaryLogEvidence(finding);
+
+                      return (
+                        <div className="findingRow" key={finding.id}>
+                          <div>
+                            <span className={`severityIndicator ${finding.severity}`}>
+                              {severityLabel[finding.severity]}
+                            </span>
+                          </div>
+                          <div className="findingTarget">
+                            {finding.nodeName ? `@${finding.nodeName}` : "Global"}
+                          </div>
+                          <div className="findingDetails">
+                            {finding.summary}
+                          </div>
+                          <div className="findingActions">
+                            {primaryEvidence ? (
+                              <button
+                                type="button"
+                                className="evidenceLinkButton"
+                                onClick={() => openFindingEvidence(finding, primaryEvidence)}
+                                title="Open linked log evidence"
+                              >
+                                <FileText size={12} />
+                                L{primaryEvidence.line}
+                              </button>
+                            ) : (
+                              <span className="structureBadge">Structure</span>
+                            )}
+                          </div>
                         </div>
-                        <div className="findingTarget">
-                          {finding.nodeName ? `@${finding.nodeName}` : "Global"}
-                        </div>
-                        <div className="findingDetails">
-                          {finding.summary}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                     {!filteredFindings.length && (
                       <div className="emptyState">
                         No active diagnostics for this selection.
@@ -697,6 +787,18 @@ export function App() {
                     </div>
                   )}
                 </div>
+              )}
+
+              {activeAnalysisTab === 'evidence' && (
+                <EvidencePanel
+                  findings={result.findings}
+                  logLines={logLines}
+                  selectedEvidence={selectedEvidence}
+                  selectedNode={selectedNode}
+                  copied={evidenceCopied}
+                  onOpenEvidence={openFindingEvidence}
+                  onCopyEvidence={copyEvidencePacket}
+                />
               )}
 
               {activeAnalysisTab === 'report' && (
@@ -746,6 +848,21 @@ export function App() {
                             </ul>
                           ) : (
                             <div className="emptyState" style={{ height: "48px" }}>Workflow operates within safe margins.</div>
+                          )}
+                        </div>
+
+                        <div className="reportDocSection">
+                          <h3>Evidence</h3>
+                          {parsedReport.evidence.length > 0 ? (
+                            <ul className="reportDocList">
+                              {parsedReport.evidence.map((item, idx) => (
+                                <li key={idx} className="reportDocItem evidence">
+                                  {item}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <div className="emptyState" style={{ height: "48px" }}>No linked log lines yet.</div>
                           )}
                         </div>
                       </div>
@@ -976,6 +1093,7 @@ function NodeInspector({
   isRootCause,
   onClose,
   onFilterFindings,
+  onOpenEvidence,
 }: {
   nodeName: string;
   node?: FlowNode;
@@ -983,6 +1101,7 @@ function NodeInspector({
   isRootCause: boolean;
   onClose: () => void;
   onFilterFindings: () => void;
+  onOpenEvidence: (finding: Finding, evidenceRef?: EvidenceReference) => void;
 }) {
   const recommendations = useMemo(() => {
     const list = findings.flatMap((f) => f.recommendations);
@@ -1020,11 +1139,25 @@ function NodeInspector({
       <div className="inspectorSection">
         <h4>Diagnostics ({findings.length})</h4>
         {findings.length > 0 ? (
-          findings.map((f) => (
-            <div className="inspectorFindingCard" key={f.id}>
-              <strong>[{severityLabel[f.severity]}]</strong> {f.summary}
-            </div>
-          ))
+          findings.map((f) => {
+            const primaryEvidence = getPrimaryLogEvidence(f);
+
+            return (
+              <div className="inspectorFindingCard" key={f.id}>
+                <strong>[{severityLabel[f.severity]}]</strong> {f.summary}
+                {primaryEvidence && (
+                  <button
+                    type="button"
+                    className="inspectorEvidenceButton"
+                    onClick={() => onOpenEvidence(f, primaryEvidence)}
+                  >
+                    <FileText size={11} />
+                    Open evidence L{primaryEvidence.line}
+                  </button>
+                )}
+              </div>
+            );
+          })
         ) : (
           <div className="emptyState" style={{ height: "48px", fontSize: "10.5px" }}>
             No diagnostics reported.
@@ -1057,6 +1190,157 @@ function NodeInspector({
   );
 }
 
+function EvidencePanel({
+  findings,
+  logLines,
+  selectedEvidence,
+  selectedNode,
+  copied,
+  onOpenEvidence,
+  onCopyEvidence,
+}: {
+  findings: Finding[];
+  logLines: LogLineView[];
+  selectedEvidence: EvidenceSelection;
+  selectedNode: string | null;
+  copied: boolean;
+  onOpenEvidence: (finding: Finding, evidenceRef?: EvidenceReference) => void;
+  onCopyEvidence: () => void;
+}) {
+  const selectedLineRef = useRef<HTMLDivElement | null>(null);
+  const findingsWithEvidence = useMemo(
+    () => findings.filter((finding) => getLogEvidence(finding).length > 0),
+    [findings],
+  );
+  const selectedFinding =
+    findingsWithEvidence.find((finding) => finding.id === selectedEvidence?.findingId) ?? findingsWithEvidence[0];
+  const selectedRefs = selectedFinding ? getLogEvidence(selectedFinding) : [];
+  const selectedLine = selectedEvidence?.line ?? selectedRefs[0]?.line;
+  const selectedLineSet = new Set(selectedRefs.map((ref) => ref.line).filter(Boolean));
+  const hasLogs = logLines.some((line) => line.text.trim());
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      selectedLineRef.current?.scrollIntoView({ behavior: "auto", block: "center" });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedFinding?.id, selectedLine]);
+
+  if (!hasLogs) {
+    return (
+      <div className="emptyState evidenceEmpty">
+        Load execution logs to link findings with concrete evidence.
+      </div>
+    );
+  }
+
+  if (!findingsWithEvidence.length) {
+    return (
+      <div className="evidenceWorkspace single">
+        <div className="logEvidenceViewer">
+          <div className="logViewerHeader">
+            <div>
+              <strong>Execution Log</strong>
+              <span>No high-confidence evidence links were detected.</span>
+            </div>
+          </div>
+          <div className="logLines">
+            {logLines.map((line) => (
+              <div className="logLine" key={line.lineNumber}>
+                <span className="logLineNumber">{line.lineNumber}</span>
+                <code>{line.text || " "}</code>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="evidenceWorkspace">
+      <aside className="evidenceIndex">
+        <div className="evidenceToolbar">
+          <div>
+            <strong>{findingsWithEvidence.length} linked findings</strong>
+            <span>{selectedNode ? `Map synced @${selectedNode}` : "Map sync enabled"}</span>
+          </div>
+          <button type="button" className="secondaryButton" onClick={onCopyEvidence}>
+            <ClipboardCopy size={12} />
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+
+        <div className="evidenceCards">
+          {findingsWithEvidence.map((finding) => {
+            const refs = getLogEvidence(finding);
+            const active = finding.id === selectedFinding?.id;
+
+            return (
+              <div className={`evidenceCard ${active ? "active" : ""}`} key={finding.id}>
+                <button
+                  type="button"
+                  className="evidenceCardMain"
+                  onClick={() => onOpenEvidence(finding, refs[0])}
+                >
+                  <span className={`severityIndicator ${finding.severity}`}>
+                    {severityLabel[finding.severity]}
+                  </span>
+                  <strong>{finding.title}</strong>
+                  <small>{finding.nodeName ? `@${finding.nodeName}` : "Global"} · {finding.confidence}% confidence</small>
+                </button>
+                <div className="evidenceRefs">
+                  {refs.map((ref) => (
+                    <button
+                      type="button"
+                      className={`logLinePill ${selectedLine === ref.line ? "active" : ""}`}
+                      key={`${finding.id}-${ref.line}-${ref.text}`}
+                      onClick={() => onOpenEvidence(finding, ref)}
+                      title={ref.text}
+                    >
+                      L{ref.line}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </aside>
+
+      <div className="logEvidenceViewer">
+        <div className="logViewerHeader">
+          <div>
+            <strong>{selectedFinding?.title ?? "Execution Log"}</strong>
+            <span>{selectedLine ? `Focused on log line ${selectedLine}` : "Choose evidence to focus a line"}</span>
+          </div>
+          {selectedFinding?.nodeName && <span className="logViewerNode">@{selectedFinding.nodeName}</span>}
+        </div>
+
+        <div className="logLines">
+          {logLines.map((line) => {
+            const isSelected = selectedLine === line.lineNumber;
+            const isRelated = selectedLineSet.has(line.lineNumber);
+            const isContext = selectedLine ? Math.abs(line.lineNumber - selectedLine) <= 2 : false;
+
+            return (
+              <div
+                ref={isSelected ? selectedLineRef : null}
+                className={`logLine ${isSelected ? "selected" : ""} ${isRelated ? "related" : ""} ${isContext ? "context" : ""}`}
+                key={line.lineNumber}
+              >
+                <span className="logLineNumber">{line.lineNumber}</span>
+                <code>{line.text || " "}</code>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function normalizeGraph(nodes: FlowNode[]): FlowNode[] {
   if (!nodes.length) return [];
   const minX = Math.min(...nodes.map((node) => node.x));
@@ -1076,6 +1360,30 @@ function normalizeGraph(nodes: FlowNode[]): FlowNode[] {
       y: 110 + normY * 140, // Perfectly centers vertically in a 380px viewBox
     };
   });
+}
+
+function getLogEvidence(finding: Finding): EvidenceReference[] {
+  return (finding.evidenceRefs ?? []).filter((ref) => ref.source === "logs" && typeof ref.line === "number");
+}
+
+function getPrimaryLogEvidence(finding: Finding): EvidenceReference | undefined {
+  return getLogEvidence(finding)[0];
+}
+
+function buildEvidencePacket(findings: Finding[]): string {
+  return findings
+    .flatMap((finding) =>
+      getLogEvidence(finding).map((ref) =>
+        [
+          `[${severityLabel[finding.severity]}] ${finding.title}`,
+          `Node: ${ref.nodeName ?? finding.nodeName ?? "Global"}`,
+          `Evidence: L${ref.line} ${ref.text}`,
+          "",
+        ].join("\n"),
+      ),
+    )
+    .join("\n")
+    .trim();
 }
 
 function scoreTone(score: number): "good" | "warn" | "danger" | "neutral" {

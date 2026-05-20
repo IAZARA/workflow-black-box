@@ -23,8 +23,16 @@ export type Finding = {
   confidence: number;
   summary: string;
   evidence: string[];
+  evidenceRefs?: EvidenceReference[];
   recommendations: string[];
   category: "runtime" | "data" | "auth" | "resilience" | "silent-failure" | "design";
+};
+
+export type EvidenceReference = {
+  source: "logs" | "workflow";
+  line?: number;
+  text: string;
+  nodeName?: string;
 };
 
 export type AnalysisResult = {
@@ -63,6 +71,12 @@ type N8nWorkflow = {
 type Candidate = {
   finding: Finding;
   penalty: number;
+};
+
+type LogLine = {
+  lineNumber: number;
+  raw: string;
+  text: string;
 };
 
 const severityWeight: Record<Severity, number> = {
@@ -338,50 +352,57 @@ function analyzeLogs(logText: string, nodes: FlowNode[]): Candidate[] {
   }
 
   const candidates: Candidate[] = [];
-  const lines = logText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const lines = parseLogLines(logText);
+  const visibleLines = lines.filter((line) => line.text);
   const nodeName = extractNodeName(logText, nodes);
   const blob = logText.toLowerCase();
 
   if (/\b429\b|too many requests|rate limit/.test(blob)) {
-    candidates.push(nodeFinding(nodeName, "high", "Rate limit failure detected", "runtime", 94, matchingLines(lines, /429|too many requests|rate limit/i), [
+    const evidenceRefs = matchingLogEvidence(lines, /429|too many requests|rate limit/i, nodes);
+    candidates.push(nodeFinding(evidenceNodeName(evidenceRefs, nodeName), "high", "Rate limit failure detected", "runtime", 94, evidenceTexts(evidenceRefs), [
       "Add retry with backoff and respect Retry-After headers.",
       "Queue or throttle requests before the vendor API step.",
-    ]));
+    ], evidenceRefs));
   }
 
   if (/\b401\b|\b403\b|unauthorized|forbidden|credential|token expired/.test(blob)) {
-    candidates.push(nodeFinding(nodeName, "high", "Authentication or credential failure detected", "auth", 92, matchingLines(lines, /401|403|unauthorized|forbidden|credential|token expired/i), [
+    const evidenceRefs = matchingLogEvidence(lines, /401|403|unauthorized|forbidden|credential|token expired/i, nodes);
+    candidates.push(nodeFinding(evidenceNodeName(evidenceRefs, nodeName), "high", "Authentication or credential failure detected", "auth", 92, evidenceTexts(evidenceRefs), [
       "Refresh credentials and alert before token expiration when possible.",
       "Separate auth failures from business-rule failures in reporting.",
-    ]));
+    ], evidenceRefs));
   }
 
   if (/timeout|timed out|etimedout|econnreset|socket hang up/.test(blob)) {
-    candidates.push(nodeFinding(nodeName, "high", "Network timeout or connection reset", "runtime", 88, matchingLines(lines, /timeout|timed out|etimedout|econnreset|socket hang up/i), [
+    const evidenceRefs = matchingLogEvidence(lines, /timeout|timed out|etimedout|econnreset|socket hang up/i, nodes);
+    candidates.push(nodeFinding(evidenceNodeName(evidenceRefs, nodeName), "high", "Network timeout or connection reset", "runtime", 88, evidenceTexts(evidenceRefs), [
       "Set explicit timeouts and retry safe requests.",
       "Capture request IDs or vendor trace IDs for escalation.",
-    ]));
+    ], evidenceRefs));
   }
 
   if (/cannot read|undefined|null|missing|required field|companyid|property/.test(blob)) {
-    candidates.push(nodeFinding(nodeName, "high", "Mapping is reading missing data", "data", 86, matchingLines(lines, /cannot read|undefined|null|missing|required field|companyid|property/i), [
+    const evidenceRefs = matchingLogEvidence(lines, /cannot read|undefined|null|missing|required field|companyid|property/i, nodes);
+    candidates.push(nodeFinding(evidenceNodeName(evidenceRefs, nodeName), "high", "Mapping is reading missing data", "data", 86, evidenceTexts(evidenceRefs), [
       "Validate required fields before this node runs.",
       "Add a quarantine path for incomplete records instead of letting the workflow crash late.",
-    ]));
+    ], evidenceRefs));
   }
 
   if (/invalid json|schema|did not match|expected|malformed|not match expected/.test(blob)) {
-    candidates.push(nodeFinding(nodeName, "critical", "Output contract mismatch", "silent-failure", 89, matchingLines(lines, /invalid json|schema|did not match|expected|malformed|not match expected/i), [
+    const evidenceRefs = matchingLogEvidence(lines, /invalid json|schema|did not match|expected|malformed|not match expected/i, nodes);
+    candidates.push(nodeFinding(evidenceNodeName(evidenceRefs, nodeName), "critical", "Output contract mismatch", "silent-failure", 89, evidenceTexts(evidenceRefs), [
       "Validate outputs against a strict schema before the next step.",
       "For AI nodes, ask for JSON only and reject non-conforming responses.",
-    ]));
+    ], evidenceRefs));
   }
 
   if (/marked success|success but|warning|wrong value|bad data|silent/.test(blob)) {
-    candidates.push(nodeFinding(nodeName, "critical", "Silent failure risk found in logs", "silent-failure", 93, matchingLines(lines, /marked success|success but|warning|wrong value|bad data|silent/i), [
+    const evidenceRefs = matchingLogEvidence(lines, /marked success|success but|warning|wrong value|bad data|silent/i, nodes);
+    candidates.push(nodeFinding(evidenceNodeName(evidenceRefs, nodeName), "critical", "Silent failure risk found in logs", "silent-failure", 93, evidenceTexts(evidenceRefs), [
       "Add post-run assertions that verify the business result, not just execution success.",
       "Send suspicious successes to review until confidence is high.",
-    ]));
+    ], evidenceRefs));
   }
 
   if (!candidates.length) {
@@ -395,7 +416,13 @@ function analyzeLogs(logText: string, nodes: FlowNode[]): Candidate[] {
         confidence: 54,
         category: "design",
         summary: "No high-confidence failure signature was found, but the logs can still be attached to the client report.",
-        evidence: lines.slice(0, 2),
+        evidence: visibleLines.slice(0, 2).map((line) => line.text),
+        evidenceRefs: visibleLines.slice(0, 2).map((line) => ({
+          source: "logs",
+          line: line.lineNumber,
+          text: line.text,
+          nodeName: nodeName,
+        })),
         recommendations: [
           "Add a failed execution sample or a recent suspicious success for a stronger diagnosis.",
           "Include node names and response bodies when exporting logs.",
@@ -415,6 +442,7 @@ function nodeFinding(
   confidence: number,
   evidence: string[],
   recommendations: string[],
+  evidenceRefs: EvidenceReference[] = [],
 ): Candidate {
   return {
     penalty: severityWeight[severity],
@@ -427,6 +455,7 @@ function nodeFinding(
       category,
       summary: nodeName ? `${title} at "${nodeName}".` : title,
       evidence: evidence.length ? evidence : ["Detected from workflow structure."],
+      evidenceRefs,
       recommendations,
     },
   };
@@ -448,8 +477,61 @@ function extractNodeName(logText: string, nodes: FlowNode[]): string | undefined
   return risky?.name;
 }
 
-function matchingLines(lines: string[], pattern: RegExp): string[] {
-  return lines.filter((line) => pattern.test(line)).slice(0, 4);
+function parseLogLines(logText: string): LogLine[] {
+  return logText.split(/\r?\n/).map((raw, index) => ({
+    lineNumber: index + 1,
+    raw,
+    text: raw.trim(),
+  }));
+}
+
+function matchingLogEvidence(lines: LogLine[], pattern: RegExp, nodes: FlowNode[]): EvidenceReference[] {
+  return lines
+    .map((line, index) => ({ line, index }))
+    .filter(({ line }) => line.text && pattern.test(line.text))
+    .slice(0, 4)
+    .map(({ line, index }) => ({
+      source: "logs",
+      line: line.lineNumber,
+      text: line.text,
+      nodeName: resolveLogNodeName(lines, index, nodes),
+    }));
+}
+
+function evidenceTexts(evidenceRefs: EvidenceReference[]): string[] {
+  return evidenceRefs.map((ref) => (ref.line ? `L${ref.line}: ${ref.text}` : ref.text));
+}
+
+function evidenceNodeName(evidenceRefs: EvidenceReference[], fallback: string | undefined): string | undefined {
+  return evidenceRefs.find((ref) => ref.nodeName)?.nodeName ?? fallback;
+}
+
+function resolveLogNodeName(lines: LogLine[], index: number, nodes: FlowNode[]): string | undefined {
+  const offsets = [0, -1, 1, -2, 2, -3, 3];
+
+  for (const offset of offsets) {
+    const line = lines[index + offset];
+    if (!line?.text) {
+      continue;
+    }
+
+    const explicit = line.text.match(/^node:\s*(.+)$/i)?.[1]?.trim();
+    if (explicit) {
+      return knownNodeName(explicit, nodes) ?? explicit;
+    }
+
+    const named = nodes.find((node) => line.text.toLowerCase().includes(node.name.toLowerCase()));
+    if (named) {
+      return named.name;
+    }
+  }
+
+  return undefined;
+}
+
+function knownNodeName(value: string, nodes: FlowNode[]): string | undefined {
+  const lower = value.toLowerCase();
+  return nodes.find((node) => node.name.toLowerCase() === lower)?.name;
 }
 
 function buildNodeRiskMap(findings: Finding[]): Map<string, Severity> {
@@ -486,6 +568,14 @@ function buildClientReport(
 ): string {
   const blockers = findings.filter((finding) => ["critical", "high"].includes(finding.severity)).slice(0, 4);
   const nextSteps = blockers.flatMap((finding) => finding.recommendations).slice(0, 5);
+  const evidence = blockers
+    .flatMap((finding) =>
+      (finding.evidenceRefs ?? [])
+        .filter((ref) => ref.source === "logs" && ref.line)
+        .slice(0, 2)
+        .map((ref) => `- L${ref.line} (${ref.nodeName ?? finding.nodeName ?? "Global"}): ${ref.text}`),
+    )
+    .slice(0, 6);
 
   return [
     `Workflow: ${workflowName ?? "Unnamed automation"}`,
@@ -496,6 +586,9 @@ function buildClientReport(
     ...(blockers.length
       ? blockers.map((finding) => `- [${finding.severity.toUpperCase()}] ${finding.nodeName ? `${finding.nodeName}: ` : ""}${finding.title}`)
       : ["- No critical blockers detected from the provided sample."]),
+    "",
+    "Evidence detected:",
+    ...(evidence.length ? evidence : ["- No log-line evidence linked yet."]),
     "",
     "Recommended next steps:",
     ...(nextSteps.length ? nextSteps.map((step) => `- ${step}`) : ["- Add failed execution logs and one known good run for comparison."]),
