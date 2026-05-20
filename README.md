@@ -84,6 +84,42 @@ Abrir en el navegador:
 http://localhost:8080
 ```
 
+## Uso como MCP para agentes
+
+Workflow Black Box también expone su motor de diagnóstico como un servidor MCP por `stdio`. Esto permite que un agente use el analizador sin abrir la interfaz visual.
+
+> Nota: la imagen Docker sirve el frontend estático. El servidor MCP se ejecuta localmente con Node usando `npm run mcp`.
+
+Ejecutar el servidor MCP:
+
+```bash
+npm run mcp
+```
+
+Ejemplo de configuración para un cliente compatible con MCP:
+
+```json
+{
+  "mcpServers": {
+    "workflow-black-box": {
+      "command": "npm",
+      "args": ["run", "mcp", "--silent"],
+      "cwd": "/ruta/al/proyecto/workflow-black-box"
+    }
+  }
+}
+```
+
+Tools disponibles:
+
+| Tool | Uso |
+| --- | --- |
+| `analyze_workflow_json` | Analiza un workflow JSON y detecta riesgos estructurales. |
+| `analyze_execution_logs` | Analiza logs de ejecución, errores y suspicious successes. |
+| `analyze_workflow_with_logs` | Cruza workflow + logs para encontrar root cause, findings y recomendaciones. |
+| `generate_client_report` | Devuelve un informe conciso listo para compartir. |
+| `list_supported_patterns` | Lista los patrones de riesgo detectados actualmente. |
+
 ## Cómo usarla
 
 1. Exportá un workflow de n8n o pegá un JSON de ejemplo.
@@ -115,6 +151,8 @@ src/
   samples.ts           # Datos de ejemplo
   lib/
     analyzer.ts        # Motor de diagnóstico local
+mcp/
+  server.ts            # Servidor MCP por stdio para agentes
 ```
 
 ## Estado del proyecto
