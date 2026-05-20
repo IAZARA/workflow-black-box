@@ -2,7 +2,15 @@
 
 Consola web para diagnosticar automatizaciones de `n8n`, `Zapier` y `Make` a partir de workflows exportados y logs de ejecución.
 
-![Vista previa de Workflow Black Box](docs/preview.png)
+<p align="center">
+  <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=0b0f14">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white">
+  <img alt="Vite" src="https://img.shields.io/badge/Vite-7-646CFF?style=for-the-badge&logo=vite&logoColor=white">
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-ready-2496ED?style=for-the-badge&logo=docker&logoColor=white">
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-agent_ready-f59e0b?style=for-the-badge">
+</p>
+
+![Workflow Black Box hero](docs/hero.png)
 
 ## Qué problema resuelve
 
@@ -29,6 +37,10 @@ Workflow Black Box ayuda a detectar esos riesgos antes de que lleguen al cliente
 - Reporte exportable y copiable.
 - Diseño responsive sin overflow horizontal global.
 - Pan/zoom básico del mapa para navegar workflows más grandes.
+
+## Vista del producto
+
+![Vista previa de Workflow Black Box](docs/preview.png)
 
 ## Stack
 
@@ -87,6 +99,8 @@ http://localhost:8080
 ## Uso como MCP para agentes
 
 Workflow Black Box también expone su motor de diagnóstico como un servidor MCP por `stdio`. Esto permite que un agente use el analizador sin abrir la interfaz visual.
+
+![Arquitectura de Workflow Black Box](docs/architecture.png)
 
 > Nota: la imagen Docker sirve el frontend estático. El servidor MCP se ejecuta localmente con Node usando `npm run mcp`.
 
@@ -158,6 +172,12 @@ mcp/
 ## Estado del proyecto
 
 Este proyecto es un MVP orientado a portfolio. La base visual y funcional está lista, pero todavía hay espacio para evolucionarlo hacia una herramienta más completa.
+
+## Assets del repo
+
+- `docs/hero.png`: portada principal del README.
+- `docs/architecture.png`: diagrama visual del flujo frontend, motor de análisis y MCP.
+- `docs/social-preview.png`: banner preparado para configurarlo como Social preview en GitHub.
 
 ## Roadmap
 
