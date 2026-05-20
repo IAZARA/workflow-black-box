@@ -1,8 +1,27 @@
 {
   "name": "workflow-black-box",
   "version": "0.1.0",
+  "description": "Visual automation diagnostics console for n8n, Zapier and Make workflows, with MCP tools for agents.",
   "private": true,
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/IAZARA/workflow-black-box.git"
+  },
+  "homepage": "https://github.com/IAZARA/workflow-black-box#readme",
+  "keywords": [
+    "automation",
+    "workflow",
+    "diagnostics",
+    "n8n",
+    "zapier",
+    "make",
+    "mcp",
+    "react",
+    "typescript",
+    "docker"
+  ],
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc && vite build",

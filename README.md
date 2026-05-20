@@ -1,6 +1,9 @@
 # Workflow Black Box
 
-Consola web para diagnosticar automatizaciones de `n8n`, `Zapier` y `Make` a partir de workflows exportados y logs de ejecución.
+<p align="center">
+  <strong>Diagnóstico visual y agent-ready para automatizaciones que fallan en silencio.</strong><br>
+  Detecta riesgos, encuentra root cause y genera reportes accionables a partir de workflows exportados y logs de ejecución.
+</p>
 
 <p align="center">
   <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=0b0f14">
@@ -11,6 +14,12 @@ Consola web para diagnosticar automatizaciones de `n8n`, `Zapier` y `Make` a par
 </p>
 
 ![Workflow Black Box hero](docs/hero.png)
+
+## Descripción
+
+Workflow Black Box es una consola de diagnóstico para automatizaciones construidas con `n8n`, `Zapier`, `Make` y flujos similares. Permite cargar un workflow y sus logs, visualizar el recorrido de ejecución, detectar nodos sospechosos, estimar riesgo operativo y generar un informe claro para clientes o equipos técnicos.
+
+El proyecto también incluye un servidor MCP por `stdio`, por lo que el mismo motor de análisis puede ser usado por agentes, copilotos o herramientas de automatización sin depender de la interfaz visual.
 
 ## Qué problema resuelve
 
@@ -25,6 +34,17 @@ Workflow Black Box ayuda a detectar esos riesgos antes de que lleguen al cliente
 - genera recomendaciones accionables;
 - produce un informe listo para compartir con un cliente o equipo técnico.
 
+## Puntos fuertes
+
+| Capacidad | Qué aporta |
+| --- | --- |
+| Mapa de ejecución | Ayuda a entender rápido dónde se rompe o se degrada un workflow. |
+| Root cause visual | Marca el nodo más probable detrás del problema detectado. |
+| Análisis de logs | Cruza errores, warnings y patrones de `silent failure`. |
+| Reporte para cliente | Convierte hallazgos técnicos en un resumen compartible. |
+| Servidor MCP | Expone el analizador como herramientas reutilizables por agentes. |
+| Docker ready | Permite levantar la app en segundos en cualquier entorno compatible. |
+
 ## Funcionalidades
 
 - Importación de workflow JSON.
@@ -38,11 +58,18 @@ Workflow Black Box ayuda a detectar esos riesgos antes de que lleguen al cliente
 - Diseño responsive sin overflow horizontal global.
 - Pan/zoom básico del mapa para navegar workflows más grandes.
 
+## Pensado para
+
+- desarrolladores que mantienen automatizaciones críticas;
+- agencias que entregan workflows a clientes;
+- equipos que necesitan auditar integraciones no-code/low-code;
+- builders que quieren demostrar dominio de frontend, producto, Docker y MCP en un proyecto de portfolio.
+
 ## Vista del producto
 
 ![Vista previa de Workflow Black Box](docs/preview.png)
 
-## Stack
+## Tecnologías
 
 - React
 - TypeScript
