@@ -64,6 +64,26 @@ http://127.0.0.1:5173
 npm run build
 ```
 
+## Ejecutar con Docker
+
+Construir la imagen:
+
+```bash
+docker build -t workflow-black-box .
+```
+
+Ejecutar el contenedor:
+
+```bash
+docker run --rm -p 8080:80 workflow-black-box
+```
+
+Abrir en el navegador:
+
+```text
+http://localhost:8080
+```
+
 ## Cómo usarla
 
 1. Exportá un workflow de n8n o pegá un JSON de ejemplo.
