@@ -43,7 +43,7 @@ import {
 } from "lucide-react";
 import { ChangeEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { analyzeAutomation, AnalysisResult, EvidenceReference, Finding, FlowEdge, FlowNode, Severity } from "./lib/analyzer";
-import { sampleLog, sampleWorkflow } from "./samples";
+import { demoScenarios, sampleLog, sampleWorkflow } from "./samples";
 
 const severityLabel: Record<Severity, string> = {
   critical: "Critical",
@@ -130,6 +130,7 @@ export function App() {
   const [activeAnalysisTab, setActiveAnalysisTab] = useState<ActiveAnalysisTab>('findings');
   const [selectedEvidence, setSelectedEvidence] = useState<EvidenceSelection>(null);
   const [evidenceCopied, setEvidenceCopied] = useState(false);
+  const [activeDemoId, setActiveDemoId] = useState<string | null>(demoScenarios[0]?.id ?? null);
   
   // Double-State Sidebar: 'summary' or 'editors'
   const [sidebarMode, setSidebarMode] = useState<'summary' | 'editors'>('summary');
@@ -153,6 +154,10 @@ export function App() {
     () => result.findings.reduce((total, finding) => total + getLogEvidence(finding).length, 0),
     [result.findings],
   );
+  const activeDemo = useMemo(
+    () => demoScenarios.find((scenario) => scenario.id === activeDemoId) ?? null,
+    [activeDemoId],
+  );
 
   async function copyReport() {
     await navigator.clipboard.writeText(result.clientReport);
@@ -171,11 +176,22 @@ export function App() {
   }
 
   function loadSample() {
-    setWorkflowText(sampleWorkflow);
-    setLogText(sampleLog);
+    loadDemoScenario(demoScenarios[0]?.id ?? "incident");
+  }
+
+  function loadDemoScenario(scenarioId: string) {
+    const scenario = demoScenarios.find((item) => item.id === scenarioId);
+    if (!scenario) {
+      return;
+    }
+
+    setWorkflowText(scenario.workflow);
+    setLogText(scenario.logs);
+    setActiveDemoId(scenario.id);
     setSelectedNode(null);
     setSelectedEvidence(null);
     setSidebarMode('summary');
+    setActiveAnalysisTab('findings');
     setZoom(1);
     setPan({ x: 0, y: 0 });
   }
@@ -183,6 +199,7 @@ export function App() {
   function clearInputs() {
     setWorkflowText("");
     setLogText("");
+    setActiveDemoId(null);
     setSelectedNode(null);
     setSelectedEvidence(null);
     setSidebarMode('editors');
@@ -203,6 +220,7 @@ export function App() {
       setLogText(text);
       setActiveInputTab('logs');
     }
+    setActiveDemoId(null);
     event.target.value = "";
     setSelectedEvidence(null);
     setSidebarMode('summary');
@@ -235,6 +253,7 @@ export function App() {
         setLogText(text);
         setActiveInputTab('logs');
       }
+      setActiveDemoId(null);
       setSelectedEvidence(null);
       setSidebarMode('summary');
       setZoom(1);
@@ -518,6 +537,28 @@ export function App() {
                 </div>
               </div>
 
+              <div className="demoScenarioPanel">
+                <div className="demoScenarioHeader">
+                  <span>Demo Scenarios</span>
+                  <small>{activeDemo ? activeDemo.signal : "Custom"}</small>
+                </div>
+                <div className="demoToggleGrid" role="group" aria-label="Demo scenarios">
+                  {demoScenarios.map((scenario) => (
+                    <button
+                      type="button"
+                      className={`demoToggle ${activeDemoId === scenario.id ? 'active' : ''}`}
+                      key={scenario.id}
+                      onClick={() => loadDemoScenario(scenario.id)}
+                      title={scenario.description}
+                    >
+                      <span>{scenario.label}</span>
+                      <small>{scenario.signal}</small>
+                    </button>
+                  ))}
+                </div>
+                <p>{activeDemo?.description ?? "Manual input loaded."}</p>
+              </div>
+
               <button
                 type="button"
                 className="secondaryButton"
@@ -584,7 +625,10 @@ export function App() {
                         placeholder="Paste JSON structure..."
                         spellCheck={false}
                         value={workflowText}
-                        onChange={(event) => setWorkflowText(event.target.value)}
+                        onChange={(event) => {
+                          setWorkflowText(event.target.value);
+                          setActiveDemoId(null);
+                        }}
                       />
                       <div className="inputActions">
                         <input
@@ -612,7 +656,10 @@ export function App() {
                         placeholder="Paste logs contents..."
                         spellCheck={false}
                         value={logText}
-                        onChange={(event) => setLogText(event.target.value)}
+                        onChange={(event) => {
+                          setLogText(event.target.value);
+                          setActiveDemoId(null);
+                        }}
                       />
                       <div className="inputActions">
                         <input

@@ -348,6 +348,117 @@ body {
   color: var(--text-secondary);
 }
 
+.demoScenarioPanel {
+  padding: 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.demoScenarioHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.demoScenarioHeader span {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.demoScenarioHeader small {
+  color: var(--text-muted);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.demoToggleGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.demoToggle {
+  position: relative;
+  min-width: 0;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 8px;
+  background: rgba(255, 255, 255, 0.018);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.demoToggle:hover {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: var(--border-active);
+  color: var(--text-primary);
+}
+
+.demoToggle.active {
+  color: var(--text-primary);
+  border-color: rgba(56, 189, 248, 0.38);
+  background: rgba(56, 189, 248, 0.075);
+}
+
+.demoToggle.active::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--border-focus);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
+}
+
+.demoToggle span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.demoToggle.active span {
+  padding-left: 8px;
+}
+
+.demoToggle small {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.demoToggle.active small {
+  color: #7dd3fc;
+}
+
+.demoScenarioPanel p {
+  min-height: 30px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 /* Tab Headers inside editor mode */
 .tabHeaders {
   display: flex;
