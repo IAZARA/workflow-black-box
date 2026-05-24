@@ -26,7 +26,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { ChangeEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { analyzeAutomation, AnalysisResult, EvidenceReference, Finding, FlowNode, Severity } from "./lib/analyzer";
+import { analyzeAutomation, AnalysisResult, EvidenceReference, Finding, FlowEdge, FlowNode, Severity } from "./lib/analyzer";
 import { sampleLog, sampleWorkflow } from "./samples";
 
 const severityLabel: Record<Severity, string> = {
@@ -54,11 +54,26 @@ function getNodeIcon(type: string) {
   if (t.includes("webhook")) return <Webhook size={14} />;
   if (t.includes("code")) return <Code size={14} />;
   if (t.includes("httprequest") || t.includes("http")) return <Globe size={14} />;
-  if (t.includes("openai") || t.includes("langchain") || t.includes("ai")) return <Sparkles size={14} />;
+  if (isAiVisualType(t)) return <Sparkles size={14} />;
   if (t.includes("hubspot") || t.includes("salesforce") || t.includes("stripe") || t.includes("quickbooks")) {
     return <Database size={14} />;
   }
   return <Terminal size={14} />;
+}
+
+function isAiVisualType(type: string) {
+  return (
+    type.includes("openai") ||
+    type.includes("gemini") ||
+    type.includes("anthropic") ||
+    type.includes("claude") ||
+    type.includes("mistral") ||
+    type.includes("llm") ||
+    type.includes("lmchat") ||
+    type.includes("chatmodel") ||
+    type.includes("langchain.agent") ||
+    /(^|[.:-])agent([.:-]|$)/.test(type)
+  );
 }
 
 export function App() {
@@ -349,8 +364,8 @@ export function App() {
     if (!node) return;
     setSelectedNode(nodeName);
     
-    const normalized = normalizeGraph(result.nodes);
-    const normNode = normalized.find(n => n.name === nodeName);
+    const layout = layoutGraph(result.nodes, result.edges);
+    const normNode = layout.nodes.find(n => n.name === nodeName);
     if (!normNode) return;
 
     // Reset zoom scale to 1.0x and position selected node center to SVG coordinate space center (460, 190)
@@ -938,7 +953,8 @@ function FlowGraph({
     return <div className="graphEmpty">Provide a workflow JSON to construct map viewport.</div>;
   }
 
-  const normalized = normalizeGraph(result.nodes);
+  const graphLayout = layoutGraph(result.nodes, result.edges);
+  const normalized = graphLayout.nodes;
   const nodeMap = new Map(normalized.map((node) => [node.name, node]));
   const primaryRootCauseNode = result.rootCause?.nodeName;
 
@@ -1000,7 +1016,8 @@ function FlowGraph({
     <div className="graphScroller">
       <svg
         className="flowGraph"
-        viewBox="0 0 920 380"
+        viewBox={`0 0 ${graphLayout.width} ${graphLayout.height}`}
+        style={{ minWidth: graphLayout.width, height: graphLayout.height }}
         role="img"
         aria-label="Workflow graph"
         onWheel={handleWheel}
@@ -1341,25 +1358,115 @@ function EvidencePanel({
   );
 }
 
-function normalizeGraph(nodes: FlowNode[]): FlowNode[] {
-  if (!nodes.length) return [];
+function layoutGraph(nodes: FlowNode[], edges: FlowEdge[]): { nodes: FlowNode[]; width: number; height: number } {
+  if (!nodes.length) return { nodes: [], width: 920, height: 380 };
+
+  const nodeWidth = 140;
+  const nodeHeight = 68;
+  const xGap = 230;
+  const yGap = 98;
+  const marginX = 80;
+  const marginY = 58;
+  const nodeNames = new Set(nodes.map((node) => node.name));
+  const validEdges = edges.filter((edge) => nodeNames.has(edge.source) && nodeNames.has(edge.target));
+  const connectedNames = new Set(validEdges.flatMap((edge) => [edge.source, edge.target]));
+  const nodeByName = new Map(nodes.map((node) => [node.name, node]));
+  const levels = new Map<string, number>();
+
+  const outgoing = new Map<string, string[]>();
+  const indegree = new Map<string, number>();
+
+  for (const node of nodes) {
+    if (connectedNames.has(node.name)) {
+      outgoing.set(node.name, []);
+      indegree.set(node.name, 0);
+    }
+  }
+
+  for (const edge of validEdges) {
+    outgoing.get(edge.source)?.push(edge.target);
+    indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1);
+  }
+
+  const queue = nodes
+    .filter((node) => connectedNames.has(node.name) && (indegree.get(node.name) ?? 0) === 0)
+    .sort(compareOriginalPosition)
+    .map((node) => node.name);
+
+  for (const name of queue) {
+    levels.set(name, 0);
+  }
+
+  while (queue.length) {
+    const current = queue.shift()!;
+    const currentLevel = levels.get(current) ?? 0;
+
+    for (const target of outgoing.get(current) ?? []) {
+      levels.set(target, Math.max(levels.get(target) ?? 0, currentLevel + 1));
+      indegree.set(target, (indegree.get(target) ?? 0) - 1);
+
+      if ((indegree.get(target) ?? 0) === 0) {
+        queue.push(target);
+      }
+    }
+  }
+
+  const positionedConnected = [...levels.keys()].length;
+  const baseLevelCount = Math.max(1, Math.max(0, ...levels.values()) + 1);
   const minX = Math.min(...nodes.map((node) => node.x));
   const maxX = Math.max(...nodes.map((node) => node.x));
-  const minY = Math.min(...nodes.map((node) => node.y));
-  const maxY = Math.max(...nodes.map((node) => node.y));
   const spanX = Math.max(1, maxX - minX);
-  const spanY = Math.max(1, maxY - minY);
 
-  // Spreads nodes evenly and centers them vertically inside the viewport (height range 110 to 250)
-  return nodes.map((node) => {
-    const normX = spanX === 0 ? 0.5 : (node.x - minX) / spanX;
-    const normY = spanY === 0 ? 0.5 : (node.y - minY) / spanY;
-    return {
-      ...node,
-      x: 80 + normX * 640,
-      y: 110 + normY * 140, // Perfectly centers vertically in a 380px viewBox
-    };
-  });
+  for (const node of nodes) {
+    if (levels.has(node.name)) {
+      continue;
+    }
+
+    if (connectedNames.has(node.name)) {
+      const rank = [...connectedNames].filter((name) => !levels.has(name)).indexOf(node.name);
+      levels.set(node.name, baseLevelCount + Math.max(0, rank));
+      continue;
+    }
+
+    const originalBucket = Math.round(((node.x - minX) / spanX) * Math.max(1, baseLevelCount - 1));
+    levels.set(node.name, positionedConnected ? originalBucket : Math.floor(nodes.indexOf(node) / 4));
+  }
+
+  const groups = new Map<number, FlowNode[]>();
+  for (const node of nodes) {
+    const level = levels.get(node.name) ?? 0;
+    groups.set(level, [...(groups.get(level) ?? []), node]);
+  }
+
+  const orderedLevels = [...groups.keys()].sort((a, b) => a - b);
+  const levelToColumn = new Map(orderedLevels.map((level, index) => [level, index]));
+  const laidOut: FlowNode[] = [];
+
+  for (const level of orderedLevels) {
+    const group = groups.get(level)!.sort(compareOriginalPosition);
+    const column = levelToColumn.get(level) ?? 0;
+
+    group.forEach((node, row) => {
+      laidOut.push({
+        ...node,
+        x: marginX + column * xGap,
+        y: marginY + row * yGap,
+      });
+    });
+  }
+
+  const maxColumn = Math.max(0, ...laidOut.map((node) => Math.round((node.x - marginX) / xGap)));
+  const maxRows = Math.max(1, ...orderedLevels.map((level) => groups.get(level)?.length ?? 1));
+
+  return {
+    nodes: laidOut.sort((a, b) => nodes.indexOf(nodeByName.get(a.name) ?? a) - nodes.indexOf(nodeByName.get(b.name) ?? b)),
+    width: Math.max(920, marginX * 2 + nodeWidth + maxColumn * xGap),
+    height: Math.max(380, marginY * 2 + nodeHeight + (maxRows - 1) * yGap),
+  };
+}
+
+function compareOriginalPosition(a: FlowNode, b: FlowNode): number {
+  return a.x - b.x || a.y - b.y || a.name.localeCompare(b.name);
 }
 
 function getLogEvidence(finding: Finding): EvidenceReference[] {

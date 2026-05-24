@@ -36,7 +36,15 @@ export type EvidenceReference = {
 };
 
 export type AnalysisResult = {
-  inputType: "n8n-workflow" | "logs-only" | "mixed" | "empty";
+  inputType:
+    | "n8n-workflow"
+    | "make-scenario"
+    | "zapier-zap"
+    | "logs-only"
+    | "mixed"
+    | "empty"
+    | "invalid-json"
+    | "unsupported-json";
   nodes: FlowNode[];
   edges: FlowEdge[];
   findings: Finding[];
@@ -53,8 +61,11 @@ export type AnalysisResult = {
   clientReport: string;
 };
 
-type N8nWorkflow = {
+type WorkflowFormat = "n8n" | "make" | "zapier";
+
+type DiagnosticWorkflow = {
   name?: string;
+  format: WorkflowFormat;
   nodes?: Array<{
     id?: string;
     name?: string;
@@ -67,6 +78,14 @@ type N8nWorkflow = {
   }>;
   connections?: Record<string, Record<string, Array<Array<{ node?: string }>>>>;
 };
+
+type WorkflowNode = NonNullable<DiagnosticWorkflow["nodes"]>[number];
+
+type WorkflowParseResult =
+  | { status: "empty" }
+  | { status: "valid"; workflow: DiagnosticWorkflow }
+  | { status: "invalid"; message: string }
+  | { status: "unsupported"; message: string };
 
 type Candidate = {
   finding: Finding;
@@ -92,7 +111,10 @@ const riskyNodeTokens = [
   "webhook",
   "openai",
   "langchain",
-  "ai",
+  "gemini",
+  "anthropic",
+  "claude",
+  "mistral",
   "hubspot",
   "salesforce",
   "slack",
@@ -104,12 +126,23 @@ const riskyNodeTokens = [
 
 export function analyzeAutomation(workflowText: string, logText: string): AnalysisResult {
   const parsed = parseWorkflow(workflowText);
-  const nodes = parsed ? normalizeNodes(parsed) : [];
-  const edges = parsed ? normalizeEdges(parsed) : [];
+  const workflow = parsed.status === "valid" ? parsed.workflow : null;
+  const nodes = workflow ? normalizeNodes(workflow) : [];
+  const edges = workflow ? normalizeEdges(workflow) : [];
   const candidates: Candidate[] = [];
 
-  if (parsed) {
-    candidates.push(...analyzeWorkflow(parsed, nodes, edges));
+  if (workflow) {
+    candidates.push(...analyzeWorkflow(workflow, nodes, edges));
+  } else if (parsed.status === "invalid") {
+    candidates.push(workflowInputFinding("invalid-json", "Workflow JSON could not be parsed", parsed.message, [
+      "Fix the JSON syntax before trusting this diagnostic.",
+      "Export the workflow again from the automation platform and reload it.",
+    ]));
+  } else if (parsed.status === "unsupported") {
+    candidates.push(workflowInputFinding("unsupported-json", "Unsupported workflow JSON format", parsed.message, [
+      "Load an n8n export, a Make scenario blueprint, or a Zapier-like steps export.",
+      "If this is a valid platform export, add a parser adapter before using the score with clients.",
+    ]));
   }
 
   candidates.push(...analyzeLogs(logText, nodes));
@@ -146,7 +179,7 @@ export function analyzeAutomation(workflowText: string, logText: string): Analys
   const rootCause = findings.find((finding) => ["critical", "high"].includes(finding.severity)) ?? findings[0] ?? null;
 
   return {
-    inputType: parsed && logText.trim() ? "mixed" : parsed ? "n8n-workflow" : "logs-only",
+    inputType: resolveInputType(parsed, Boolean(logText.trim())),
     nodes: scoredNodes,
     edges,
     findings,
@@ -160,28 +193,180 @@ export function analyzeAutomation(workflowText: string, logText: string): Analys
       highCount,
       protectedSteps: findings.filter((finding) => finding.category === "resilience").length,
     },
-    clientReport: buildClientReport(parsed?.name, findings, healthScore, silentFailureRisk),
+    clientReport: buildClientReport(workflow?.name, findings, healthScore, silentFailureRisk),
   };
 }
 
-function parseWorkflow(text: string): N8nWorkflow | null {
+function parseWorkflow(text: string): WorkflowParseResult {
   if (!text.trim()) {
-    return null;
+    return { status: "empty" };
   }
 
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(text) as N8nWorkflow;
-    if (Array.isArray(parsed.nodes)) {
-      return parsed;
-    }
-  } catch {
-    return null;
+    parsed = JSON.parse(text);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown JSON parse error.";
+    return { status: "invalid", message };
   }
 
-  return null;
+  if (!isRecord(parsed)) {
+    return { status: "unsupported", message: "The workflow input is valid JSON, but it is not a JSON object." };
+  }
+
+  if (Array.isArray(parsed.nodes)) {
+    return { status: "valid", workflow: { ...(parsed as Omit<DiagnosticWorkflow, "format">), format: "n8n" } };
+  }
+
+  if (Array.isArray(parsed.flow)) {
+    const workflow = makeScenarioToWorkflow(parsed);
+    return workflow.nodes?.length
+      ? { status: "valid", workflow }
+      : { status: "unsupported", message: "The Make flow array did not contain any readable modules." };
+  }
+
+  if (Array.isArray(parsed.steps) || Array.isArray(parsed.actions)) {
+    const workflow = zapierExportToWorkflow(parsed);
+    return workflow.nodes?.length
+      ? { status: "valid", workflow }
+      : { status: "unsupported", message: "The Zapier steps/actions array did not contain any readable steps." };
+  }
+
+  return {
+    status: "unsupported",
+    message: "The JSON does not include n8n nodes, a Make flow array, or Zapier steps/actions.",
+  };
 }
 
-function normalizeNodes(workflow: N8nWorkflow): FlowNode[] {
+function makeScenarioToWorkflow(input: Record<string, unknown>): DiagnosticWorkflow {
+  const modules = flattenMakeModules(input.flow);
+  const names = modules.map((module, index) => makeModuleName(module, index));
+  const connections: DiagnosticWorkflow["connections"] = {};
+
+  for (let index = 0; index < names.length - 1; index += 1) {
+    addMainConnection(connections, names[index], names[index + 1]);
+  }
+
+  return {
+    name: stringOrUndefined(input.name) ?? "Imported Make scenario",
+    format: "make",
+    nodes: modules.map((module, index) => {
+      const metadata = recordOrEmpty(module.metadata);
+      const designer = recordOrEmpty(metadata.designer);
+      const moduleName = stringOrUndefined(module.module) ?? stringOrUndefined(module.type) ?? "unknown";
+      const x = numberOrUndefined(designer.x) ?? 80 + index * 220;
+      const y = numberOrUndefined(designer.y) ?? 120 + (index % 4) * 120;
+
+      return {
+        id: String(module.id ?? `make-${index + 1}`),
+        name: names[index],
+        type: `make.${moduleName}`,
+        position: [x, y],
+        parameters: {
+          module: moduleName,
+          parameters: recordOrEmpty(module.parameters),
+          mapper: recordOrEmpty(module.mapper),
+        },
+      };
+    }),
+    connections,
+  };
+}
+
+function zapierExportToWorkflow(input: Record<string, unknown>): DiagnosticWorkflow {
+  const steps = (Array.isArray(input.steps) ? input.steps : input.actions) as unknown[];
+  const records = steps.filter(isRecord);
+  const names = records.map((step, index) => zapierStepName(step, index));
+  const connections: DiagnosticWorkflow["connections"] = {};
+
+  for (let index = 0; index < names.length - 1; index += 1) {
+    addMainConnection(connections, names[index], names[index + 1]);
+  }
+
+  return {
+    name: stringOrUndefined(input.name) ?? stringOrUndefined(input.title) ?? "Imported Zapier zap",
+    format: "zapier",
+    nodes: records.map((step, index) => {
+      const appName = stringOrUndefined(step.app) ?? stringOrUndefined(step.appName) ?? stringOrUndefined(step.service);
+      const actionName = stringOrUndefined(step.action) ?? stringOrUndefined(step.event) ?? stringOrUndefined(step.type);
+
+      return {
+        id: String(step.id ?? step.key ?? `zapier-${index + 1}`),
+        name: names[index],
+        type: ["zapier", appName, actionName].filter(Boolean).join("."),
+        position: [80 + index * 220, 120],
+        parameters: recordOrEmpty(step),
+      };
+    }),
+    connections,
+  };
+}
+
+function flattenMakeModules(flow: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(flow)) {
+    return [];
+  }
+
+  const modules: Record<string, unknown>[] = [];
+
+  for (const item of flow) {
+    if (!isRecord(item)) {
+      continue;
+    }
+
+    modules.push(item);
+
+    const routes = item.routes;
+    if (Array.isArray(routes)) {
+      for (const route of routes) {
+        if (isRecord(route)) {
+          modules.push(...flattenMakeModules(route.flow));
+        }
+      }
+    }
+  }
+
+  return modules;
+}
+
+function makeModuleName(module: Record<string, unknown>, index: number): string {
+  const metadata = recordOrEmpty(module.metadata);
+  const label =
+    stringOrUndefined(module.name) ??
+    stringOrUndefined(module.label) ??
+    stringOrUndefined(metadata.name) ??
+    stringOrUndefined(metadata.label);
+
+  if (label) {
+    return label;
+  }
+
+  const moduleName = stringOrUndefined(module.module) ?? stringOrUndefined(module.type);
+  return moduleName ? humanizeToken(moduleName) : `Make module ${index + 1}`;
+}
+
+function zapierStepName(step: Record<string, unknown>, index: number): string {
+  return (
+    stringOrUndefined(step.name) ??
+    stringOrUndefined(step.title) ??
+    stringOrUndefined(step.label) ??
+    stringOrUndefined(step.key) ??
+    `Zapier step ${index + 1}`
+  );
+}
+
+function addMainConnection(
+  connections: NonNullable<DiagnosticWorkflow["connections"]>,
+  source: string,
+  target: string,
+): void {
+  connections[source] ??= {};
+  connections[source].main ??= [[]];
+  connections[source].main[0] ??= [];
+  connections[source].main[0].push({ node: target });
+}
+
+function normalizeNodes(workflow: DiagnosticWorkflow): FlowNode[] {
   return (workflow.nodes ?? []).map((node, index) => {
     const fallbackX = 80 + (index % 5) * 220;
     const fallbackY = 120 + Math.floor(index / 5) * 150;
@@ -199,12 +384,14 @@ function normalizeNodes(workflow: N8nWorkflow): FlowNode[] {
   });
 }
 
-function normalizeEdges(workflow: N8nWorkflow): FlowEdge[] {
+function normalizeEdges(workflow: DiagnosticWorkflow): FlowEdge[] {
   const edges: FlowEdge[] = [];
   const connections = workflow.connections ?? {};
 
   for (const [source, outputs] of Object.entries(connections)) {
-    for (const groups of Object.values(outputs)) {
+    const outputEntries = Object.entries(outputs).filter(([outputName]) => outputName === "main");
+
+    for (const [, groups] of outputEntries) {
       for (const group of groups ?? []) {
         for (const target of group ?? []) {
           if (target.node) {
@@ -218,14 +405,14 @@ function normalizeEdges(workflow: N8nWorkflow): FlowEdge[] {
   return edges;
 }
 
-function analyzeWorkflow(workflow: N8nWorkflow, nodes: FlowNode[], edges: FlowEdge[]): Candidate[] {
+function analyzeWorkflow(workflow: DiagnosticWorkflow, nodes: FlowNode[], edges: FlowEdge[]): Candidate[] {
   const candidates: Candidate[] = [];
   const nodeByName = new Map((workflow.nodes ?? []).map((node) => [node.name ?? "", node]));
   const lowerTypes = nodes.map((node) => node.type.toLowerCase());
   const hasErrorTrigger = lowerTypes.some((type) => type.includes("errortrigger"));
-  const hasValidationNode = lowerTypes.some((type) => type.includes("if") || type.includes("switch") || type.includes("filter"));
+  const hasValidationNode = lowerTypes.some(isValidationNodeType);
 
-  if (!hasErrorTrigger && nodes.length > 2) {
+  if (workflow.format === "n8n" && !hasErrorTrigger && nodes.length > 2) {
     candidates.push({
       penalty: 11,
       finding: {
@@ -298,14 +485,14 @@ function analyzeWorkflow(workflow: N8nWorkflow, nodes: FlowNode[], edges: FlowEd
       }
     }
 
-    if (type.includes("openai") || type.includes("langchain") || type.includes("ai")) {
+    if (isAiProducerNodeType(type)) {
       const downstream = edges.filter((edge) => edge.source === node.name).map((edge) => edge.target);
       const downstreamTypes = downstream.map((name) => nodeByName.get(name)?.type?.toLowerCase() ?? "");
-      const hasSchemaGuard = downstreamTypes.some((candidateType) =>
-        ["if", "switch", "filter", "code"].some((token) => candidateType.includes(token)),
-      );
+      const hasSchemaGuard =
+        downstreamTypes.some((candidateType) => isValidationNodeType(candidateType) || isStructuredOutputParserType(candidateType)) ||
+        hasIncomingStructuredOutputParser(workflow, node.name);
 
-      if (!hasSchemaGuard) {
+      if (downstream.length > 0 && !hasSchemaGuard) {
         candidates.push(nodeFinding(node.name, "critical", "AI output is not schema-validated", "silent-failure", 91, [
           "AI node output flows directly to the next step without an obvious validator.",
         ], [
@@ -332,7 +519,7 @@ function analyzeWorkflow(workflow: N8nWorkflow, nodes: FlowNode[], edges: FlowEd
         return sourceType.includes("if") || sourceParams.includes("search") || sourceParams.includes("lookup");
       });
 
-      if (!hasLookup && parameterBlob.includes("create")) {
+      if (!hasLookup && hasCreateSideEffect(raw, node.name)) {
         candidates.push(nodeFinding(node.name, "high", "Create action may duplicate records", "data", 78, [
           "A create operation is visible without an obvious lookup/upsert step immediately before it.",
         ], [
@@ -461,6 +648,33 @@ function nodeFinding(
   };
 }
 
+function workflowInputFinding(
+  id: string,
+  title: string,
+  message: string,
+  recommendations: string[],
+): Candidate {
+  return {
+    penalty: severityWeight.high,
+    finding: {
+      id,
+      severity: "high",
+      title,
+      confidence: 98,
+      category: "design",
+      summary: `${title}.`,
+      evidence: [`Workflow input: ${message}`],
+      evidenceRefs: [
+        {
+          source: "workflow",
+          text: message,
+        },
+      ],
+      recommendations,
+    },
+  };
+}
+
 function extractNodeName(logText: string, nodes: FlowNode[]): string | undefined {
   const explicit = logText.match(/node:\s*([^\n\r]+)/i)?.[1]?.trim();
   if (explicit) {
@@ -475,6 +689,124 @@ function extractNodeName(logText: string, nodes: FlowNode[]): string | undefined
 
   const risky = nodes.find((node) => riskyNodeTokens.some((token) => node.type.toLowerCase().includes(token)));
   return risky?.name;
+}
+
+function resolveInputType(parsed: WorkflowParseResult, hasLogs: boolean): AnalysisResult["inputType"] {
+  if (parsed.status === "valid") {
+    if (hasLogs) {
+      return "mixed";
+    }
+
+    if (parsed.workflow.format === "make") {
+      return "make-scenario";
+    }
+
+    if (parsed.workflow.format === "zapier") {
+      return "zapier-zap";
+    }
+
+    return "n8n-workflow";
+  }
+
+  if (parsed.status === "invalid") {
+    return "invalid-json";
+  }
+
+  if (parsed.status === "unsupported") {
+    return "unsupported-json";
+  }
+
+  return hasLogs ? "logs-only" : "empty";
+}
+
+function isValidationNodeType(type: string): boolean {
+  const lower = type.toLowerCase();
+  return (
+    /(^|[.:-])(if|switch|filter|router)([.:-]|$)/.test(lower) ||
+    lower.includes("validator") ||
+    lower.includes("validation") ||
+    lower.includes("outputparser")
+  );
+}
+
+function isAiProducerNodeType(type: string): boolean {
+  const lower = type.toLowerCase();
+
+  if (
+    lower.includes("memory") ||
+    lower.includes("outputparser") ||
+    lower.includes("tool") ||
+    lower.includes("airtable") ||
+    lower.includes("gmail")
+  ) {
+    return false;
+  }
+
+  return (
+    lower.includes("openai") ||
+    lower.includes("gemini") ||
+    lower.includes("anthropic") ||
+    lower.includes("claude") ||
+    lower.includes("mistral") ||
+    lower.includes("llm") ||
+    lower.includes("lmchat") ||
+    lower.includes("chatmodel") ||
+    lower.includes("langchain.agent") ||
+    /(^|[.:-])agent([.:-]|$)/.test(lower)
+  );
+}
+
+function isStructuredOutputParserType(type: string): boolean {
+  const lower = type.toLowerCase();
+  return lower.includes("outputparser") || lower.includes("structuredoutputparser");
+}
+
+function hasIncomingStructuredOutputParser(workflow: DiagnosticWorkflow, nodeName: string): boolean {
+  const nodes = new Map((workflow.nodes ?? []).map((node) => [node.name ?? "", node]));
+
+  for (const [source, outputs] of Object.entries(workflow.connections ?? {})) {
+    const sourceType = nodes.get(source)?.type ?? "";
+    if (!isStructuredOutputParserType(sourceType)) {
+      continue;
+    }
+
+    for (const groups of Object.values(outputs)) {
+      for (const group of groups ?? []) {
+        if (group?.some((target) => target.node === nodeName)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+function hasCreateSideEffect(node: WorkflowNode | undefined, nodeName: string): boolean {
+  const parameters = recordOrEmpty(node?.parameters);
+  const operation =
+    stringOrUndefined(parameters.operation) ??
+    stringOrUndefined(parameters.action) ??
+    stringOrUndefined(parameters.resourceOperation) ??
+    stringOrUndefined(parameters.mode);
+  const normalizedOperation = operation?.toLowerCase().replace(/\s+/g, "");
+
+  if (normalizedOperation) {
+    return (
+      normalizedOperation.includes("create") &&
+      !normalizedOperation.includes("update") &&
+      !normalizedOperation.includes("upsert") &&
+      !normalizedOperation.includes("get") &&
+      !normalizedOperation.includes("search")
+    );
+  }
+
+  const normalizedName = nodeName.toLowerCase();
+  return (
+    /^create\b/.test(normalizedName) &&
+    !normalizedName.includes("create or update") &&
+    !normalizedName.includes("upsert")
+  );
 }
 
 function parseLogLines(logText: string): LogLine[] {
@@ -613,6 +945,31 @@ function emptyResult(): AnalysisResult {
     },
     clientReport: "Paste a workflow JSON or execution log to generate a client-ready report.",
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function recordOrEmpty(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function humanizeToken(value: string): string {
+  const lastSegment = value.split(/[.:/]/).filter(Boolean).pop() ?? value;
+  return lastSegment
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function severityRank(severity: Severity): number {
