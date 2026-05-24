@@ -701,15 +701,16 @@ body {
 }
 
 .graphNode rect.bg {
-  fill: #0c0d10;
-  stroke: #1c1e22;
+  fill: #0b0c0f;
+  stroke: #20242b;
   stroke-width: 1px;
   transition: var(--transition-fast);
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.22));
 }
 
 .graphNode:hover rect.bg,
 .graphNode.selected rect.bg {
-  fill: #111216;
+  fill: #111318;
   stroke: var(--border-active);
 }
 
@@ -733,14 +734,69 @@ body {
   height: 100%;
   border-radius: var(--radius-sm);
   background: #08090b;
-  border: 1px solid var(--border-color);
+  border: 1px solid #20242b;
   color: var(--text-secondary);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
 }
 
 .graphNode:hover .nodeIconBox,
 .graphNode.selected .nodeIconBox {
   color: var(--text-primary);
   border-color: var(--border-active);
+}
+
+.nodeIconBox.trigger {
+  color: #7dd3fc;
+  background: rgba(14, 165, 233, 0.08);
+  border-color: rgba(14, 165, 233, 0.22);
+}
+
+.nodeIconBox.logic {
+  color: #c4b5fd;
+  background: rgba(139, 92, 246, 0.08);
+  border-color: rgba(139, 92, 246, 0.22);
+}
+
+.nodeIconBox.api {
+  color: #67e8f9;
+  background: rgba(6, 182, 212, 0.08);
+  border-color: rgba(6, 182, 212, 0.22);
+}
+
+.nodeIconBox.ai {
+  color: #f0abfc;
+  background: rgba(217, 70, 239, 0.08);
+  border-color: rgba(217, 70, 239, 0.22);
+}
+
+.nodeIconBox.comms {
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.22);
+}
+
+.nodeIconBox.crm {
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.22);
+}
+
+.nodeIconBox.commerce {
+  color: #fdba74;
+  background: rgba(249, 115, 22, 0.08);
+  border-color: rgba(249, 115, 22, 0.22);
+}
+
+.nodeIconBox.data {
+  color: #5eead4;
+  background: rgba(20, 184, 166, 0.08);
+  border-color: rgba(20, 184, 166, 0.22);
+}
+
+.nodeIconBox.code {
+  color: #d8b4fe;
+  background: rgba(168, 85, 247, 0.08);
+  border-color: rgba(168, 85, 247, 0.22);
 }
 
 .nodeNameText {

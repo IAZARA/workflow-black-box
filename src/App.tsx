@@ -16,6 +16,22 @@ import {
   Globe,
   Database,
   Terminal,
+  Bot,
+  BrainCircuit,
+  Mail,
+  MessageSquare,
+  CreditCard,
+  CalendarClock,
+  Clock3,
+  Filter,
+  GitFork,
+  ShieldCheck,
+  KeyRound,
+  Table2,
+  FileSpreadsheet,
+  ShoppingCart,
+  Users,
+  Send,
   X,
   Trash2,
   ChevronLeft,
@@ -51,14 +67,41 @@ type LogLineView = {
 
 function getNodeIcon(type: string) {
   const t = type.toLowerCase();
-  if (t.includes("webhook")) return <Webhook size={14} />;
-  if (t.includes("code")) return <Code size={14} />;
-  if (t.includes("httprequest") || t.includes("http")) return <Globe size={14} />;
-  if (isAiVisualType(t)) return <Sparkles size={14} />;
-  if (t.includes("hubspot") || t.includes("salesforce") || t.includes("stripe") || t.includes("quickbooks")) {
-    return <Database size={14} />;
-  }
+  if (t.includes("webhook")) return <Webhook size={15} />;
+  if (t.includes("trigger")) return <GitFork size={15} />;
+  if (t.includes("if") || t.includes("switch") || t.includes("filter") || t.includes("router")) return <Filter size={15} />;
+  if (t.includes("code")) return <Code size={15} />;
+  if (t.includes("httprequest") || t.includes("http")) return <Globe size={15} />;
+  if (t.includes("openai") || t.includes("gemini") || t.includes("claude") || t.includes("anthropic")) return <BrainCircuit size={15} />;
+  if (isAiVisualType(t)) return <Bot size={15} />;
+  if (t.includes("gmail") || t.includes("mailchimp")) return <Mail size={15} />;
+  if (t.includes("slack") || t.includes("telegram") || t.includes("whatsapp") || t.includes("mattermost")) return <MessageSquare size={15} />;
+  if (t.includes("stripe") || t.includes("quickbooks") || t.includes("invoice")) return <CreditCard size={15} />;
+  if (t.includes("shopify") || t.includes("woocommerce")) return <ShoppingCart size={15} />;
+  if (t.includes("calendar") || t.includes("calendly")) return <CalendarClock size={15} />;
+  if (t.includes("cron") || t.includes("schedule")) return <Clock3 size={15} />;
+  if (t.includes("airtable") || t.includes("sheets")) return <Table2 size={15} />;
+  if (t.includes("spreadsheet") || t.includes("excel")) return <FileSpreadsheet size={15} />;
+  if (t.includes("hubspot") || t.includes("salesforce") || t.includes("pipedrive") || t.includes("zoho")) return <Users size={15} />;
+  if (t.includes("auth") || t.includes("credential")) return <KeyRound size={15} />;
+  if (t.includes("validation") || t.includes("validator")) return <ShieldCheck size={15} />;
+  if (t.includes("send")) return <Send size={15} />;
+  if (t.includes("database") || t.includes("postgres") || t.includes("supabase") || t.includes("mysql")) return <Database size={15} />;
   return <Terminal size={14} />;
+}
+
+function getNodeIconTone(type: string) {
+  const t = type.toLowerCase();
+  if (t.includes("webhook") || t.includes("trigger") || t.includes("cron") || t.includes("schedule")) return "trigger";
+  if (t.includes("if") || t.includes("switch") || t.includes("filter") || t.includes("router") || t.includes("validation")) return "logic";
+  if (t.includes("httprequest") || t.includes("http")) return "api";
+  if (isAiVisualType(t) || t.includes("openai") || t.includes("gemini") || t.includes("claude")) return "ai";
+  if (t.includes("gmail") || t.includes("slack") || t.includes("telegram") || t.includes("whatsapp") || t.includes("mail")) return "comms";
+  if (t.includes("hubspot") || t.includes("salesforce") || t.includes("pipedrive") || t.includes("zoho")) return "crm";
+  if (t.includes("stripe") || t.includes("quickbooks") || t.includes("shopify") || t.includes("woocommerce")) return "commerce";
+  if (t.includes("airtable") || t.includes("sheets") || t.includes("database") || t.includes("postgres") || t.includes("supabase")) return "data";
+  if (t.includes("code")) return "code";
+  return "default";
 }
 
 function isAiVisualType(type: string) {
@@ -1082,7 +1125,7 @@ function FlowGraph({
                 )}
                 <rect width="140" height="68" rx="6" className="bg" />
                 <foreignObject x="10" y="15" width="38" height="38">
-                  <div className="nodeIconBox">
+                  <div className={`nodeIconBox ${getNodeIconTone(node.type)}`}>
                     {getNodeIcon(node.type)}
                   </div>
                 </foreignObject>
@@ -1363,10 +1406,6 @@ function layoutGraph(nodes: FlowNode[], edges: FlowEdge[]): { nodes: FlowNode[];
 
   const nodeWidth = 140;
   const nodeHeight = 68;
-  const xGap = 230;
-  const yGap = 98;
-  const marginX = 80;
-  const marginY = 58;
   const nodeNames = new Set(nodes.map((node) => node.name));
   const validEdges = edges.filter((edge) => nodeNames.has(edge.source) && nodeNames.has(edge.target));
   const connectedNames = new Set(validEdges.flatMap((edge) => [edge.source, edge.target]));
@@ -1440,6 +1479,13 @@ function layoutGraph(nodes: FlowNode[], edges: FlowEdge[]): { nodes: FlowNode[];
 
   const orderedLevels = [...groups.keys()].sort((a, b) => a - b);
   const levelToColumn = new Map(orderedLevels.map((level, index) => [level, index]));
+  const maxRows = Math.max(1, ...orderedLevels.map((level) => groups.get(level)?.length ?? 1));
+  const compact = nodes.length <= 8 && maxRows <= 2;
+  const xGap = compact ? 155 : 230;
+  const yGap = compact ? 88 : 98;
+  const width = compact ? 920 : Math.max(920, 160 + nodeWidth + Math.max(0, orderedLevels.length - 1) * xGap);
+  const marginX = compact ? Math.max(56, (width - (nodeWidth + Math.max(0, orderedLevels.length - 1) * xGap)) / 2) : 80;
+  const marginY = compact ? 110 : 58;
   const laidOut: FlowNode[] = [];
 
   for (const level of orderedLevels) {
@@ -1456,11 +1502,10 @@ function layoutGraph(nodes: FlowNode[], edges: FlowEdge[]): { nodes: FlowNode[];
   }
 
   const maxColumn = Math.max(0, ...laidOut.map((node) => Math.round((node.x - marginX) / xGap)));
-  const maxRows = Math.max(1, ...orderedLevels.map((level) => groups.get(level)?.length ?? 1));
 
   return {
     nodes: laidOut.sort((a, b) => nodes.indexOf(nodeByName.get(a.name) ?? a) - nodes.indexOf(nodeByName.get(b.name) ?? b)),
-    width: Math.max(920, marginX * 2 + nodeWidth + maxColumn * xGap),
+    width: Math.max(width, marginX * 2 + nodeWidth + maxColumn * xGap),
     height: Math.max(380, marginY * 2 + nodeHeight + (maxRows - 1) * yGap),
   };
 }
